@@ -72,9 +72,16 @@ async def start(message: types.Message):
 @dp.callback_query_handler(lambda c: c.data == "add")
 async def add_shift(callback: types.CallbackQuery):
     await callback.answer()
+    
     await callback.message.answer(
         "Введи данные в формате:\n\n"
-        "2026-02-01 100 80 40"
+        "📅 ГГГГ-ММ-ДД 💰 СТАВКА 🍾 КОНСУМ ☕ ЧАЙ\n\n"
+        "Пример:\n"
+        "2026-02-01 100 80 40\n\n"
+        "Где:\n"
+        "💰 100 — ставка\n"
+        "🍾 80 — консум\n"
+        "☕ 40 — чай"
     )
 
 
