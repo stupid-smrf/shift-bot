@@ -7,7 +7,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # ================= НАСТРОЙКИ =================
 
 import os
-TOKEN = os.getenv("")
+TOKEN = os.getenv("8511943220:AAEsBJuFpR2pKIGtz38fvBjJiAlj-NBFoxE")
 
 ALLOWED_USERS = [
     505720213,
