@@ -42,21 +42,65 @@ def inline_main_menu():
         InlineKeyboardButton("📅 Месяц", callback_data="month"),
     )
     return kb
+def build_main_screen(user_id):
+    today = datetime.now().strftime("%Y-%m-%d")
 
+    # Получаем все смены пользователя
+    cursor.execute("""
+        SELECT date, rate, consum, tips
+        FROM shifts
+        WHERE user_id = ?
+    """, (user_id,))
+    rows = cursor.fetchall()
+
+    shifts_count = len(rows)
+
+    total_income = sum(float(r[1]) + float(r[2]) + float(r[3]) for r in rows) if rows else 0
+    avg_income = total_income / shifts_count if shifts_count else 0
+
+    # Проверка внесена ли смена сегодня
+    cursor.execute("""
+        SELECT 1 FROM shifts
+        WHERE user_id = ? AND date = ?
+    """, (user_id, today))
+    today_exists = cursor.fetchone()
+
+    status = "✅ Внесена" if today_exists else "❌ Не внесена"
+
+    text = (
+        "💎 <b>Shift Manager</b>\n"
+        "━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📅 Сегодня: <b>{today}</b>\n\n"
+        "📊 <b>Общая статистика</b>\n"
+        f"Смен: <b>{shifts_count}</b>\n"
+        f"💰 Доход: <b>{total_income:.2f}</b>\n"
+        f"📈 Средний: <b>{avg_income:.2f}</b>\n\n"
+        "🗓 <b>Сегодняшняя смена</b>\n"
+        f"{status}\n\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "👇 Выбери действие:"
+    )
+
+    return text
 
 # ================= START =================
 
 @dp.message_handler(commands=["start"])
 async def start(message: types.Message):
+    if message.from_user.id not in ALLOWED_USERS:
+        return
+
+    text = build_main_screen(message.from_user.id)
 
     await message.answer(
-        "💎 <b>Shift Manager</b>\n\nВыбери действие:",
-        reply_markup=ReplyKeyboardRemove(),
-        parse_mode="HTML"
+        text,
+        parse_mode="HTML",
+        reply_markup=inline_main_menu()
     )
 
     await message.answer(
-        "👇 Меню:",
+        text,
+        parse_mode="HTML",
         reply_markup=inline_main_menu()
     )
 
@@ -226,8 +270,11 @@ async def delete_shift_callback(callback: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data == "back")
 async def go_back(callback: types.CallbackQuery):
     await callback.answer()
+
+    text = build_main_screen(callback.from_user.id)
+
     await callback.message.edit_text(
-        "💎 <b>Shift Manager</b>\n\nВыбери действие:",
+        text,
         parse_mode="HTML",
         reply_markup=inline_main_menu()
     )
