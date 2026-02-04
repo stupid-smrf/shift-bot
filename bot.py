@@ -1,14 +1,18 @@
 import sqlite3
-import os
 from datetime import datetime, timedelta
-
 from aiogram import Bot, Dispatcher, executor, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import os
 
 # ================= НАСТРОЙКИ =================
 
 TOKEN = os.getenv("TOKEN")
+
+ALLOWED_USERS = [
+    505720213,
+    935696258
+]
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
@@ -42,10 +46,11 @@ def inline_main_menu():
         InlineKeyboardButton("📅 Месяц", callback_data="month"),
     )
     return kb
+
+
 def build_main_screen(user_id):
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # Получаем все смены пользователя
     cursor.execute("""
         SELECT date, rate, consum, tips
         FROM shifts
@@ -54,11 +59,9 @@ def build_main_screen(user_id):
     rows = cursor.fetchall()
 
     shifts_count = len(rows)
-
-    total_income = sum(float(r[1]) + float(r[2]) + float(r[3]) for r in rows) if rows else 0
+    total_income = sum(r[1] + r[2] + r[3] for r in rows) if rows else 0
     avg_income = total_income / shifts_count if shifts_count else 0
 
-    # Проверка внесена ли смена сегодня
     cursor.execute("""
         SELECT 1 FROM shifts
         WHERE user_id = ? AND date = ?
@@ -98,13 +101,6 @@ async def start(message: types.Message):
         reply_markup=inline_main_menu()
     )
 
-    await message.answer(
-        text,
-        parse_mode="HTML",
-        reply_markup=inline_main_menu()
-    )
-
-
 # ================= ДОБАВИТЬ =================
 
 @dp.callback_query_handler(lambda c: c.data == "add")
@@ -112,23 +108,28 @@ async def add_shift(callback: types.CallbackQuery):
     await callback.answer()
 
     await callback.message.answer(
-        "Введи данные в формате:\n\n"
-        "📅 ГГГГ-ММ-ДД 💰 СТАВКА 🍾 КОНСУМ ☕ ЧАЙ\n\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        "📅 <b>Добавление смены</b>\n\n"
+        "Формат:\n"
+        "ГГГГ-ММ-ДД СТАВКА КОНСУМ ЧАЙ\n\n"
         "Пример:\n"
         "2026-02-01 100 80 40\n\n"
         "Где:\n"
-        "💰 100 — ставка\n"
-        "🍾 80 — консум\n"
-        "☕ 40 — чай"
+        "💰 Ставка\n"
+        "🍾 Консум\n"
+        "☕ Чай",
+        parse_mode="HTML"
     )
 
 
 @dp.message_handler(lambda m: m.text and len(m.text.split()) == 4)
 async def save_shift(message: types.Message):
 
+    if message.from_user.id not in ALLOWED_USERS:
+        return
+
     try:
         date, rate, consum, tips = message.text.split()
-
         user_id = message.from_user.id
 
         cursor.execute(
@@ -137,14 +138,16 @@ async def save_shift(message: types.Message):
         )
         conn.commit()
 
+        text = build_main_screen(user_id)
+
         await message.answer(
-            "✅ Смена сохранена",
+            "✅ Смена сохранена\n\n" + text,
+            parse_mode="HTML",
             reply_markup=inline_main_menu()
         )
 
     except:
         await message.answer("❌ Ошибка формата")
-
 
 # ================= СТАТИСТИКА =================
 
@@ -167,20 +170,18 @@ async def stats(callback: types.CallbackQuery):
     shifts = len(rows)
     total = sum(r[1] + r[2] + r[3] for r in rows)
     avg = total / shifts
-
     best = max(rows, key=lambda r: r[1] + r[2] + r[3])
     best_total = best[1] + best[2] + best[3]
 
     await callback.message.answer(
         f"📊 <b>Твоя статистика</b>\n\n"
         f"📅 Смен: <b>{shifts}</b>\n"
-        f"💰 Общий доход: <b>{total:.2f}</b>\n"
+        f"💰 Общий: <b>{total:.2f}</b>\n"
         f"📈 Средний: <b>{avg:.2f}</b>\n\n"
-        f"🔥 Лучшая смена: {best[0]} — <b>{best_total:.2f}</b>",
+        f"🔥 Лучшая смена:\n{best[0]} — <b>{best_total:.2f}</b>",
         parse_mode="HTML",
         reply_markup=inline_main_menu()
     )
-
 
 # ================= ПОСЛЕДНИЕ =================
 
@@ -204,13 +205,16 @@ async def list_shifts(callback: types.CallbackQuery):
         await callback.message.answer("Нет данных")
         return
 
-    text = "📋 Последние смены:\n\n"
+    text = "📋 <b>Последние смены</b>\n\n"
     for r in rows:
         total = r[2] + r[3] + r[4]
         text += f"{r[0]}. {r[1]} — {total:.2f}\n"
 
-    await callback.message.answer(text, reply_markup=inline_main_menu())
-
+    await callback.message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=inline_main_menu()
+    )
 
 # ================= УДАЛЕНИЕ =================
 
@@ -221,7 +225,7 @@ async def delete_menu(callback: types.CallbackQuery):
     user_id = callback.from_user.id
 
     cursor.execute("""
-        SELECT id, date, rate, consum, tips
+        SELECT id, date
         FROM shifts
         WHERE user_id = ?
         ORDER BY id DESC
@@ -261,8 +265,11 @@ async def delete_shift_callback(callback: types.CallbackQuery):
     )
     conn.commit()
 
+    text = build_main_screen(callback.from_user.id)
+
     await callback.message.edit_text(
-        "✅ Смена удалена",
+        "✅ Смена удалена\n\n" + text,
+        parse_mode="HTML",
         reply_markup=inline_main_menu()
     )
 
@@ -278,7 +285,6 @@ async def go_back(callback: types.CallbackQuery):
         parse_mode="HTML",
         reply_markup=inline_main_menu()
     )
-
 
 # ================= МЕСЯЦ =================
 
@@ -306,13 +312,13 @@ async def month_stats(callback: types.CallbackQuery):
     avg = total / shifts
 
     await callback.message.answer(
-        f"📅 {month}\n\n"
+        f"📅 <b>{month}</b>\n\n"
         f"Смен: {shifts}\n"
         f"💰 Общий: {total:.2f}\n"
         f"📈 Средний: {avg:.2f}",
+        parse_mode="HTML",
         reply_markup=inline_main_menu()
     )
-
 
 # ================= НАПОМИНАНИЕ =================
 
@@ -320,13 +326,9 @@ async def check_shifts():
 
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
-    cursor.execute("SELECT DISTINCT user_id FROM shifts")
-    users = cursor.fetchall()
-
-    for (user_id,) in users:
-
+    for user_id in ALLOWED_USERS:
         cursor.execute("""
-            SELECT * FROM shifts
+            SELECT 1 FROM shifts
             WHERE user_id = ? AND date = ?
         """, (user_id, yesterday))
 
@@ -335,11 +337,9 @@ async def check_shifts():
         if not row:
             await bot.send_message(
                 user_id,
-                f"🌙 Ты не внёс смену за {yesterday}\n\n"
-                f"Не забудь добавить 👇",
+                f"🌙 Ты не внёс смену за {yesterday}\n\nНе забудь добавить 👇",
                 reply_markup=inline_main_menu()
             )
-
 
 # ================= ЗАПУСК =================
 
@@ -347,7 +347,6 @@ async def on_startup(dp):
     scheduler = AsyncIOScheduler()
     scheduler.add_job(check_shifts, "cron", hour=8, minute=0)
     scheduler.start()
-
 
 if __name__ == "__main__":
     executor.start_polling(dp, on_startup=on_startup)
