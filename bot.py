@@ -70,12 +70,13 @@ def register_user(user: types.User):
 def inline_main_menu():
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-        InlineKeyboardButton("📊 Статистика", callback_data="stats"),
+        InlineKeyboardButton("📊 Общая статистика", callback_data="stats"),
         InlineKeyboardButton("📋 Последние", callback_data="list"),
-        InlineKeyboardButton("➕ Сегодня", callback_data="today"), 
         InlineKeyboardButton("➕ Добавить", callback_data="add"),
         InlineKeyboardButton("🗑 Удалить", callback_data="delete"),
-        InlineKeyboardButton("📅 Месяц", callback_data="month"),
+        InlineKeyboardButton("📅 Текущий месяц", callback_data="month"),
+        InlineKeyboardButton("🗂 Выбрать месяц", callback_data="choose_month"),
+        InlineKeyboardButton("🔥 Лучший месяц", callback_data="best_month"),
     )
     return kb
 
@@ -577,6 +578,77 @@ async def month_stats(callback: types.CallbackQuery):
     parse_mode="HTML",
     reply_markup=inline_main_menu()
 )
+@dp.callback_query_handler(lambda c: c.data == "best_month")
+async def best_month(callback: types.CallbackQuery):
+    await callback.answer()
+
+    user_id = callback.from_user.id
+
+    cursor.execute("""
+        SELECT substr(date, 1, 7) as month,
+               SUM(rate + consum + tips) as total
+        FROM shifts
+        WHERE user_id = ?
+        GROUP BY month
+        ORDER BY total DESC
+        LIMIT 1
+    """, (user_id,))
+
+    row = cursor.fetchone()
+
+    if not row:
+        await callback.message.answer("Нет данных")
+        return
+
+    month, total = row
+
+    await callback.message.answer(
+        f"🔥 <b>Лучший месяц</b>\n\n"
+        f"📅 {month}\n"
+        f"💰 Доход: <b>{total:.2f}</b>",
+        parse_mode="HTML",
+        reply_markup=inline_main_menu()
+    )
+@dp.callback_query_handler(lambda c: c.data == "choose_month")
+async def choose_month(callback: types.CallbackQuery):
+    await callback.answer()
+
+    await callback.message.answer(
+        "📅 Введи месяц в формате:\n\n"
+        "ГГГГ-ММ\n\n"
+        "Пример:\n"
+        "2026-02"
+    )
+@dp.message_handler(lambda m: len(m.text) == 7 and "-" in m.text)
+async def custom_month_stats(message: types.Message):
+
+    user_id = message.from_user.id
+    month = message.text
+
+    cursor.execute("""
+        SELECT rate, consum, tips
+        FROM shifts
+        WHERE user_id = ? AND date LIKE ?
+    """, (user_id, f"{month}%"))
+
+    rows = cursor.fetchall()
+
+    if not rows:
+        await message.answer("Нет данных за этот месяц")
+        return
+
+    shifts = len(rows)
+    total = sum(r[0] + r[1] + r[2] for r in rows)
+    avg = total / shifts
+
+    await message.answer(
+        f"📅 <b>Статистика за {month}</b>\n\n"
+        f"📅 Смен: <b>{shifts}</b>\n"
+        f"💰 Итого: <b>{total:.2f}</b>\n"
+        f"📈 Средний: <b>{avg:.2f}</b>",
+        parse_mode="HTML",
+        reply_markup=inline_main_menu()
+    )
     # ================= СЕГОДНЯ =================
 @dp.callback_query_handler(lambda c: c.data == "today")
 async def today_shift(callback: types.CallbackQuery):
