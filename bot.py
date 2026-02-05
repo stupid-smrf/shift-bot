@@ -72,6 +72,7 @@ def inline_main_menu():
     kb.add(
         InlineKeyboardButton("📊 Статистика", callback_data="stats"),
         InlineKeyboardButton("📋 Последние", callback_data="list"),
+        InlineKeyboardButton("➕ Сегодня", callback_data="today"), 
         InlineKeyboardButton("➕ Добавить", callback_data="add"),
         InlineKeyboardButton("🗑 Удалить", callback_data="delete"),
         InlineKeyboardButton("📅 Месяц", callback_data="month"),
@@ -576,6 +577,19 @@ async def month_stats(callback: types.CallbackQuery):
     parse_mode="HTML",
     reply_markup=inline_main_menu()
 )
+    # ================= СЕГОДНЯ =================
+@dp.callback_query_handler(lambda c: c.data == "today")
+async def today_shift(callback: types.CallbackQuery):
+    await callback.answer()
+
+    await callback.message.answer(
+        "📅 <b>Сегодняшняя смена</b>\n\n"
+        "Введи:\n\n"
+        "СТАВКА КОНСУМ ЧАЙ\n\n"
+        "Пример:\n"
+        "3000 2300 2500",
+        parse_mode="HTML"
+    )
 
 # ================= НАПОМИНАНИЕ =================
 
