@@ -272,7 +272,7 @@ async def add_shift(callback: types.CallbackQuery):
     )
 
 
-@dp.message_handler(lambda m: m.text)
+@dp.message_handler(lambda m: m.text and not m.text.startswith("/"))
 async def save_shift(message: types.Message):
 
     if message.from_user.id not in ALLOWED_USERS:
@@ -355,9 +355,9 @@ async def save_shift(message: types.Message):
 
     except:
         await message.answer("❌ Ошибка формата или даты")
-        @dp.callback_query_handler(lambda c: c.data == "confirm_update")
-        async def confirm_update(callback: types.CallbackQuery):
-         await callback.answer()
+@dp.callback_query_handler(lambda c: c.data == "confirm_update")
+async def confirm_update(callback: types.CallbackQuery):
+    await callback.answer()
 
     user_id = callback.from_user.id
 
