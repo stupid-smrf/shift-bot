@@ -217,17 +217,10 @@ async def stats_command(message: types.Message):
         parse_mode="HTML",
         reply_markup=inline_main_menu()
     )
-    @dp.message_handler(commands=["add"])
-    async def add_command(message: types.Message):
-     await message.answer(
-        "📅 Формат:\n\n"
-        "ГГГГ-ММ-ДД СТАВКА КОНСУМ ЧАЙ\n\n"
-        "Пример:\n"
-        "2026-02-01 100 80 40"
-    )
-     @dp.message_handler(commands=["list"])
-     async def list_command(message: types.Message):
-      user_id = message.from_user.id
+@dp.message_handler(commands=["list"])
+async def list_command(message: types.Message):
+
+    user_id = message.from_user.id
 
     cursor.execute("""
         SELECT id, date, rate, consum, tips
@@ -244,6 +237,7 @@ async def stats_command(message: types.Message):
         return
 
     text = "📋 <b>Последние смены</b>\n\n"
+
     for r in rows:
         total = r[2] + r[3] + r[4]
         text += f"{r[0]}. {r[1]} — {total:.2f}\n"
@@ -391,6 +385,7 @@ async def confirm_update(callback: types.CallbackQuery):
         parse_mode="HTML",
         reply_markup=inline_main_menu()
     )
+
 
 # ================= СТАТИСТИКА =================
 
@@ -649,6 +644,41 @@ async def custom_month_stats(message: types.Message):
         parse_mode="HTML",
         reply_markup=inline_main_menu()
     )
+    async def monthly_report():
+    
+     today = datetime.now()
+
+    # Берём прошлый месяц
+    first_day = today.replace(day=1)
+    last_month = first_day - timedelta(days=1)
+    month = last_month.strftime("%Y-%m")
+
+    for user_id in ALLOWED_USERS:
+
+        cursor.execute("""
+            SELECT rate, consum, tips
+            FROM shifts
+            WHERE user_id = ? AND date LIKE ?
+        """, (user_id, f"{month}%"))
+
+        rows = cursor.fetchall()
+
+        if not rows:
+            continue
+
+        shifts = len(rows)
+        total = sum(r[0] + r[1] + r[2] for r in rows)
+        avg = total / shifts
+
+        await bot.send_message(
+            user_id,
+            f"📅 <b>Отчёт за {month}</b>\n\n"
+            f"Смен: <b>{shifts}</b>\n"
+            f"💰 Итого: <b>{total:.2f}</b>\n"
+            f"📈 Средний: <b>{avg:.2f}</b>\n\n"
+            f"🔥 Отличная работа!",
+            parse_mode="HTML"
+        )
     # ================= СЕГОДНЯ =================
 @dp.callback_query_handler(lambda c: c.data == "today")
 async def today_shift(callback: types.CallbackQuery):
@@ -667,9 +697,11 @@ async def today_shift(callback: types.CallbackQuery):
 
 async def check_shifts():
 
-    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    today = datetime.now()
+    yesterday = (today - timedelta(days=1)).strftime("%Y-%m-%d")
 
     for user_id in ALLOWED_USERS:
+
         cursor.execute("""
             SELECT 1 FROM shifts
             WHERE user_id = ? AND date = ?
@@ -680,7 +712,8 @@ async def check_shifts():
         if not row:
             await bot.send_message(
                 user_id,
-                f"🌙 Ты не внёс смену за {yesterday}\n\nНе забудь добавить 👇",
+                f"🌙 Смена за {yesterday} не внесена.\n\n"
+                f"Рабочий день закончился — внеси данные 👇",
                 reply_markup=inline_main_menu()
             )
 
@@ -688,7 +721,13 @@ async def check_shifts():
 
 async def on_startup(dp):
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(check_shifts, "cron", hour=8, minute=0)
+
+    # Напоминание в 07:30
+    scheduler.add_job(check_shifts, "cron", hour=7, minute=30)
+
+    # Отчёт 1 числа в 09:00
+    scheduler.add_job(monthly_report, "cron", day=1, hour=9, minute=0)
+
     scheduler.start()
 
     await set_commands(dp)
