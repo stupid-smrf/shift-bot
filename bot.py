@@ -198,20 +198,28 @@ async def stats(callback: types.CallbackQuery):
         return
 
     shifts = len(rows)
-    total = sum(r[1] + r[2] + r[3] for r in rows)
+    total_rate = sum(r[1] for r in rows)
+    total_consum = sum(r[2] for r in rows)
+    total_tips = sum(r[3] for r in rows)
+
+    total = total_rate + total_consum + total_tips
+    avg = total / len(rows)
     avg = total / shifts
     best = max(rows, key=lambda r: r[1] + r[2] + r[3])
     best_total = best[1] + best[2] + best[3]
 
     await callback.message.answer(
-        f"📊 <b>Твоя статистика</b>\n\n"
-        f"📅 Смен: <b>{shifts}</b>\n"
-        f"💰 Общий: <b>{total:.2f}</b>\n"
-        f"📈 Средний: <b>{avg:.2f}</b>\n\n"
-        f"🔥 Лучшая смена:\n{best[0]} — <b>{best_total:.2f}</b>",
-        parse_mode="HTML",
-        reply_markup=inline_main_menu()
-    )
+    f"📊 <b>Твоя статистика</b>\n\n"
+    f"📅 Смен: <b>{len(rows)}</b>\n\n"
+    f"💵 Ставка: <b>{total_rate:.2f}</b>\n"
+    f"🍾 Консум: <b>{total_consum:.2f}</b>\n"
+    f"☕ Чай: <b>{total_tips:.2f}</b>\n"
+    f"━━━━━━━━━━━━━━\n"
+    f"💰 Итого: <b>{total:.2f}</b>\n"
+    f"📈 Средний: <b>{avg:.2f}</b>",
+    parse_mode="HTML",
+    reply_markup=inline_main_menu()
+)
 
 # ================= ПОСЛЕДНИЕ =================
 
@@ -338,17 +346,26 @@ async def month_stats(callback: types.CallbackQuery):
         return
 
     shifts = len(rows)
-    total = sum(r[0] + r[1] + r[2] for r in rows)
+
+    total_rate = sum(r[0] for r in rows)
+    total_consum = sum(r[1] for r in rows)
+    total_tips = sum(r[2] for r in rows)
+
+    total = total_rate + total_consum + total_tips
     avg = total / shifts
 
     await callback.message.answer(
-        f"📅 <b>{month}</b>\n\n"
-        f"Смен: {shifts}\n"
-        f"💰 Общий: {total:.2f}\n"
-        f"📈 Средний: {avg:.2f}",
-        parse_mode="HTML",
-        reply_markup=inline_main_menu()
-    )
+    f"📅 <b>Статистика за {month}</b>\n\n"
+    f"📅 Смен: <b>{shifts}</b>\n\n"
+    f"💵 Ставка: <b>{total_rate:.2f}</b>\n"
+    f"🍾 Консум: <b>{total_consum:.2f}</b>\n"
+    f"☕ Чай: <b>{total_tips:.2f}</b>\n"
+    f"━━━━━━━━━━━━━━\n"
+    f"💰 Итого: <b>{total:.2f}</b>\n"
+    f"📈 Средний: <b>{avg:.2f}</b>",
+    parse_mode="HTML",
+    reply_markup=inline_main_menu()
+)
 
 # ================= НАПОМИНАНИЕ =================
 
@@ -379,7 +396,7 @@ async def on_startup(dp):
     scheduler.start()
 
     await set_commands(dp)
-    
+
 async def set_commands(dp):
     await bot.set_my_commands([
         types.BotCommand("start", "Главное меню"),
