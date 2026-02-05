@@ -223,8 +223,8 @@ async def stats_command(message: types.Message):
         "2026-02-01 100 80 40"
     )
      @dp.message_handler(commands=["list"])
-async def list_command(message: types.Message):
-    user_id = message.from_user.id
+     async def list_command(message: types.Message):
+      user_id = message.from_user.id
 
     cursor.execute("""
         SELECT id, date, rate, consum, tips
@@ -271,16 +271,70 @@ async def add_shift(callback: types.CallbackQuery):
     )
 
 
-@dp.message_handler(lambda m: m.text and len(m.text.split()) == 4)
+@dp.message_handler(lambda m: m.text)
 async def save_shift(message: types.Message):
 
     if message.from_user.id not in ALLOWED_USERS:
         return
 
     try:
-        date, rate, consum, tips = message.text.split()
+        parts = message.text.split()
         user_id = message.from_user.id
 
+        today = datetime.now()
+        current_year = today.year
+
+        # -------------------------------
+        # Определяем дату
+        # -------------------------------
+        if len(parts) == 3:
+            date = today.strftime("%Y-%m-%d")
+            rate, consum, tips = parts
+
+        elif parts[0].lower() == "вчера" and len(parts) == 4:
+            date = (today - timedelta(days=1)).strftime("%Y-%m-%d")
+            rate, consum, tips = parts[1:]
+
+        elif "." in parts[0] and len(parts) == 4:
+            day, month = parts[0].split(".")
+            date_obj = datetime(current_year, int(month), int(day))
+            date = date_obj.strftime("%Y-%m-%d")
+            rate, consum, tips = parts[1:]
+
+        elif len(parts) == 4 and "-" in parts[0]:
+            date, rate, consum, tips = parts
+
+        else:
+            await message.answer("❌ Неверный формат")
+            return
+
+        # -------------------------------
+        # Проверка на дубль
+        # -------------------------------
+        cursor.execute(
+            "SELECT id FROM shifts WHERE user_id = ? AND date = ?",
+            (user_id, date)
+        )
+        existing = cursor.fetchone()
+
+        if existing:
+            kb = InlineKeyboardMarkup()
+            kb.add(
+                InlineKeyboardButton("✏️ Обновить", callback_data=f"update_{date}_{rate}_{consum}_{tips}")
+            )
+            kb.add(
+                InlineKeyboardButton("❌ Отмена", callback_data="back")
+            )
+
+            await message.answer(
+                f"⚠️ Смена за {date} уже существует.\n\nОбновить её?",
+                reply_markup=kb
+            )
+            return
+
+        # -------------------------------
+        # Сохраняем новую
+        # -------------------------------
         cursor.execute(
             "INSERT INTO shifts (user_id, date, rate, consum, tips) VALUES (?, ?, ?, ?, ?)",
             (user_id, date, float(rate), float(consum), float(tips))
@@ -296,7 +350,29 @@ async def save_shift(message: types.Message):
         )
 
     except:
-        await message.answer("❌ Ошибка формата")
+        await message.answer("❌ Ошибка формата или даты")
+        @dp.callback_query_handler(lambda c: c.data.startswith("update_"))
+        async def update_shift(callback: types.CallbackQuery):
+         await callback.answer()
+
+    _, date, rate, consum, tips = callback.data.split("_")
+    user_id = callback.from_user.id
+
+    cursor.execute("""
+        UPDATE shifts
+        SET rate = ?, consum = ?, tips = ?
+        WHERE user_id = ? AND date = ?
+    """, (float(rate), float(consum), float(tips), user_id, date))
+
+    conn.commit()
+
+    text = build_main_screen(user_id)
+
+    await callback.message.edit_text(
+        "✅ Смена обновлена\n\n" + text,
+        parse_mode="HTML",
+        reply_markup=inline_main_menu()
+    )
 
 # ================= СТАТИСТИКА =================
 
