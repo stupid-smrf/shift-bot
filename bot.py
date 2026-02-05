@@ -16,6 +16,7 @@ ALLOWED_USERS = [
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
+pending_updates = {}
 
 # ================= БАЗА =================
 
@@ -318,13 +319,16 @@ async def save_shift(message: types.Message):
         existing = cursor.fetchone()
 
         if existing:
+            pending_updates[user_id] = {
+                "date": date,
+                "rate": float(rate),
+                "consum": float(consum),
+                "tips": float(tips)
+            }
+
             kb = InlineKeyboardMarkup()
-            kb.add(
-                InlineKeyboardButton("✏️ Обновить", callback_data=f"update_{date}_{rate}_{consum}_{tips}")
-            )
-            kb.add(
-                InlineKeyboardButton("❌ Отмена", callback_data="back")
-            )
+            kb.add(InlineKeyboardButton("✏️ Обновить", callback_data="confirm_update"))
+            kb.add(InlineKeyboardButton("❌ Отмена", callback_data="back"))
 
             await message.answer(
                 f"⚠️ Смена за {date} уже существует.\n\nОбновить её?",
@@ -351,25 +355,37 @@ async def save_shift(message: types.Message):
 
     except:
         await message.answer("❌ Ошибка формата или даты")
-        @dp.callback_query_handler(lambda c: c.data.startswith("update_"))
-        async def update_shift(callback: types.CallbackQuery):
+        @dp.callback_query_handler(lambda c: c.data == "confirm_update")
+        async def confirm_update(callback: types.CallbackQuery):
          await callback.answer()
 
-    _, date, rate, consum, tips = callback.data.split("_")
     user_id = callback.from_user.id
+
+    if user_id not in pending_updates:
+        return
+
+    data = pending_updates[user_id]
 
     cursor.execute("""
         UPDATE shifts
         SET rate = ?, consum = ?, tips = ?
         WHERE user_id = ? AND date = ?
-    """, (float(rate), float(consum), float(tips), user_id, date))
+    """, (
+        data["rate"],
+        data["consum"],
+        data["tips"],
+        user_id,
+        data["date"]
+    ))
 
     conn.commit()
+
+    del pending_updates[user_id]
 
     text = build_main_screen(user_id)
 
     await callback.message.edit_text(
-        "✅ Смена обновлена\n\n" + text,
+        "✏️ Смена обновлена\n\n" + text,
         parse_mode="HTML",
         reply_markup=inline_main_menu()
     )
