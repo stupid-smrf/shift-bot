@@ -378,5 +378,17 @@ async def on_startup(dp):
     scheduler.add_job(check_shifts, "cron", hour=8, minute=0)
     scheduler.start()
 
+    await set_commands(dp)
+    
+async def set_commands(dp):
+    await bot.set_my_commands([
+        types.BotCommand("start", "Главное меню"),
+        types.BotCommand("add", "Добавить смену"),
+        types.BotCommand("stats", "Общая статистика"),
+        types.BotCommand("month", "Статистика за месяц"),
+        types.BotCommand("list", "Последние смены"),
+        types.BotCommand("delete", "Удалить смену"),
+        types.BotCommand("help", "Помощь"),
+    ])
 if __name__ == "__main__":
     executor.start_polling(dp, on_startup=on_startup)
