@@ -78,9 +78,14 @@ def inline_main_menu():
     return kb
 
 
-def build_main_screen(user_id):
-    today = datetime.now().strftime("%Y-%m-%d")
+import random
 
+def build_main_screen(user_id):
+    today = datetime.now().strftime("%d.%m.%Y")
+    today_db = datetime.now().strftime("%Y-%m-%d")
+    month_name = datetime.now().strftime("%B")
+
+    # Получаем смены пользователя
     cursor.execute("""
         SELECT date, rate, consum, tips
         FROM shifts
@@ -89,39 +94,52 @@ def build_main_screen(user_id):
     rows = cursor.fetchall()
 
     shifts_count = len(rows)
-    total_income = sum(r[1] + r[2] + r[3] for r in rows) if rows else 0
+
+    total_rate = sum(r[1] for r in rows) if rows else 0
+    total_consum = sum(r[2] for r in rows) if rows else 0
+    total_tips = sum(r[3] for r in rows) if rows else 0
+    total_income = total_rate + total_consum + total_tips
     avg_income = total_income / shifts_count if shifts_count else 0
 
+    # Проверка внесена ли смена сегодня
     cursor.execute("""
         SELECT 1 FROM shifts
         WHERE user_id = ? AND date = ?
-    """, (user_id, today))
+    """, (user_id, today_db))
     today_exists = cursor.fetchone()
 
     status = "✅ Внесена" if today_exists else "❌ Не внесена"
 
+    # Мотивационные фразы
+    quotes = [
+        "Дисциплина делает деньги",
+        "Система > мотивация",
+        "Каждая смена — шаг к свободе",
+        "Стабильность — это сила",
+        "Работаешь умно — живёшь красиво"
+    ]
+
+    quote = random.choice(quotes)
+
     text = (
-        "💎 <b>Shift Manager</b>\n"
-        "━━━━━━━━━━━━━━━━━━━\n\n"
-        f"📅 Сегодня: <b>{today}</b>\n\n"
+        "💎 <b>SHIFT MANAGER PRO</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📅 <b>{today}</b> | {month_name}\n\n"
         "📊 <b>Общая статистика</b>\n"
         f"Смен: <b>{shifts_count}</b>\n"
         f"💰 Доход: <b>{total_income:.2f}</b>\n"
         f"📈 Средний: <b>{avg_income:.2f}</b>\n\n"
         "🗓 <b>Сегодняшняя смена</b>\n"
         f"{status}\n\n"
-        "━━━━━━━━━━━━━━━━━━━\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"💬 <i>{quote}</i>\n\n"
         "👇 Выбери действие:"
     )
-
-    return text
 
 # ================= START =================
 
 @dp.message_handler(commands=["start"])
 async def start(message: types.Message):
-
-    register_user(message.from_user)
 
     text = build_main_screen(message.from_user.id)
 
