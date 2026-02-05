@@ -32,6 +32,16 @@ CREATE TABLE IF NOT EXISTS shifts (
     tips REAL
 )
 """)
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    first_name TEXT,
+    username TEXT,
+    registered_at TEXT
+)
+""")
+
 conn.commit()
 
 # ================= МЕНЮ =================
