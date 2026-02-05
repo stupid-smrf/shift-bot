@@ -43,6 +43,26 @@ CREATE TABLE IF NOT EXISTS users (
 """)
 
 conn.commit()
+# ================= РЕГИСТРАЦИЯ =================
+
+def register_user(user: types.User):
+    cursor.execute(
+        "SELECT user_id FROM users WHERE user_id = ?",
+        (user.id,)
+    )
+    exists = cursor.fetchone()
+
+    if not exists:
+        cursor.execute(
+            "INSERT INTO users (user_id, first_name, username, registered_at) VALUES (?, ?, ?, ?)",
+            (
+                user.id,
+                user.first_name,
+                user.username,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            )
+        )
+        conn.commit()
 
 # ================= МЕНЮ =================
 
@@ -100,8 +120,8 @@ def build_main_screen(user_id):
 
 @dp.message_handler(commands=["start"])
 async def start(message: types.Message):
-    if message.from_user.id not in ALLOWED_USERS:
-        return
+
+    register_user(message.from_user)
 
     text = build_main_screen(message.from_user.id)
 
