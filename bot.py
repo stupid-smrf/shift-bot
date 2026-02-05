@@ -152,7 +152,7 @@ def build_main_screen(user_id):
     quote = random.choice(quotes)
 
     text = (
-        "💎 <b>SHIFT MANAGER PRO</b>\n"
+        "💎 <b>Твой личный менеджер по доходу 💅</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📅 <b>{today}</b> | {month_name}\n\n"
         "📊 <b>Общая статистика</b>\n"
@@ -180,7 +180,76 @@ async def start(message: types.Message):
         parse_mode="HTML",
         reply_markup=inline_main_menu()
     )
+@dp.message_handler(commands=["stats"])
+async def stats_command(message: types.Message):
+    user_id = message.from_user.id
 
+    cursor.execute(
+        "SELECT date, rate, consum, tips FROM shifts WHERE user_id = ?",
+        (user_id,)
+    )
+    rows = cursor.fetchall()
+
+    if not rows:
+        await message.answer("Нет данных")
+        return
+
+    shifts = len(rows)
+    total_rate = sum(r[1] for r in rows)
+    total_consum = sum(r[2] for r in rows)
+    total_tips = sum(r[3] for r in rows)
+
+    total = total_rate + total_consum + total_tips
+    avg = total / shifts
+
+    await message.answer(
+        f"📊 <b>Твоя статистика</b>\n\n"
+        f"📅 Смен: <b>{shifts}</b>\n\n"
+        f"💵 Ставка: <b>{total_rate:.2f}</b>\n"
+        f"🍾 Консум: <b>{total_consum:.2f}</b>\n"
+        f"☕ Чай: <b>{total_tips:.2f}</b>\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"💰 Итого: <b>{total:.2f}</b>\n"
+        f"📈 Средний: <b>{avg:.2f}</b>",
+        parse_mode="HTML",
+        reply_markup=inline_main_menu()
+    )
+    @dp.message_handler(commands=["add"])
+    async def add_command(message: types.Message):
+     await message.answer(
+        "📅 Формат:\n\n"
+        "ГГГГ-ММ-ДД СТАВКА КОНСУМ ЧАЙ\n\n"
+        "Пример:\n"
+        "2026-02-01 100 80 40"
+    )
+     @dp.message_handler(commands=["list"])
+async def list_command(message: types.Message):
+    user_id = message.from_user.id
+
+    cursor.execute("""
+        SELECT id, date, rate, consum, tips
+        FROM shifts
+        WHERE user_id = ?
+        ORDER BY id DESC
+        LIMIT 5
+    """, (user_id,))
+
+    rows = cursor.fetchall()
+
+    if not rows:
+        await message.answer("Нет данных")
+        return
+
+    text = "📋 <b>Последние смены</b>\n\n"
+    for r in rows:
+        total = r[2] + r[3] + r[4]
+        text += f"{r[0]}. {r[1]} — {total:.2f}\n"
+
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=inline_main_menu()
+    )
 # ================= ДОБАВИТЬ =================
 
 @dp.callback_query_handler(lambda c: c.data == "add")
