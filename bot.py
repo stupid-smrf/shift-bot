@@ -4,6 +4,8 @@ from aiogram import Bot, Dispatcher, executor, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import os
+def format_money(value):
+    return f"{int(value):,}".replace(",", " ") + " ₽"
 
 # ================= НАСТРОЙКИ =================
 
@@ -17,6 +19,8 @@ ALLOWED_USERS = [
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 pending_updates = {}
+today_mode = set()
+month_mode = set()
 
 # ================= БАЗА =================
 
@@ -69,15 +73,27 @@ def register_user(user: types.User):
 
 def inline_main_menu():
     kb = InlineKeyboardMarkup(row_width=2)
+
     kb.add(
         InlineKeyboardButton("📊 Общая статистика", callback_data="stats"),
         InlineKeyboardButton("📋 Последние", callback_data="list"),
+    )
+
+    kb.add(
         InlineKeyboardButton("➕ Добавить", callback_data="add"),
+        InlineKeyboardButton("📅 Сегодня", callback_data="today"),
+    )
+
+    kb.add(
         InlineKeyboardButton("🗑 Удалить", callback_data="delete"),
         InlineKeyboardButton("📅 Текущий месяц", callback_data="month"),
+    )
+
+    kb.add(
         InlineKeyboardButton("🗂 Выбрать месяц", callback_data="choose_month"),
         InlineKeyboardButton("🔥 Лучший месяц", callback_data="best_month"),
     )
+
     return kb
 
 
@@ -160,8 +176,8 @@ def build_main_screen(user_id):
         f"📅 <b>{today}</b> | {month_name}\n\n"
         "📊 <b>Общая статистика</b>\n"
         f"Смен: <b>{shifts_count}</b>\n"
-        f"💰 Доход: <b>{total_income:.2f}</b>\n"
-        f"📈 Средний: <b>{avg_income:.2f}</b>\n\n"
+        f"💰 Доход: <b>{format_money(total_income)}</b>\n"
+        f"📈 Средний: <b>{format_money(avg_income)}</b>\n\n"
         "🗓 <b>Сегодняшняя смена</b>\n"
         f"{status}\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -205,18 +221,20 @@ async def stats_command(message: types.Message):
     total = total_rate + total_consum + total_tips
     avg = total / shifts
 
+
     await message.answer(
         f"📊 <b>Твоя статистика</b>\n\n"
         f"📅 Смен: <b>{shifts}</b>\n\n"
-        f"💵 Ставка: <b>{total_rate:.2f}</b>\n"
-        f"🍾 Консум: <b>{total_consum:.2f}</b>\n"
-        f"☕ Чай: <b>{total_tips:.2f}</b>\n"
+        f"💵 Ставка: <b>{format_money(total_rate)}</b>\n"
+        f"🍾 Консум: <b>{format_money(total_consum)}</b>\n"
+        f"☕ Чай: <b>{format_money(total_tips)}</b>\n"
         f"━━━━━━━━━━━━━━\n"
-        f"💰 Итого: <b>{total:.2f}</b>\n"
-        f"📈 Средний: <b>{avg:.2f}</b>",
+        f"💰 Итого: <b>{format_money(total)}</b>\n"
+        f"📈 Средний: <b>{format_money(avg)}</b>",
         parse_mode="HTML",
         reply_markup=inline_main_menu()
     )
+
 @dp.message_handler(commands=["list"])
 async def list_command(message: types.Message):
 
@@ -240,7 +258,7 @@ async def list_command(message: types.Message):
 
     for r in rows:
         total = r[2] + r[3] + r[4]
-        text += f"{r[0]}. {r[1]} — {total:.2f}\n"
+        text += f"{r[0]}. {r[1]} — {format_money(total)}\n"
 
     await message.answer(
         text,
@@ -267,26 +285,72 @@ async def add_shift(callback: types.CallbackQuery):
         parse_mode="HTML"
     )
 
+@dp.message_handler(lambda m: m.from_user.id in month_mode)
+async def custom_month_stats(message: types.Message):
+
+    user_id = message.from_user.id
+    month = message.text.strip()
+
+    # Проверка формата
+    try:
+        datetime.strptime(month, "%Y-%m")
+    except:
+        await message.answer("❌ Формат должен быть ГГГГ-ММ")
+        return
+
+    month_mode.remove(user_id)
+
+    cursor.execute("""
+        SELECT rate, consum, tips
+        FROM shifts
+        WHERE user_id = ? AND date LIKE ?
+    """, (user_id, f"{month}%"))
+
+    rows = cursor.fetchall()
+
+    if not rows:
+        await message.answer("Нет данных за этот месяц")
+        return
+
+    shifts = len(rows)
+    total = sum(r[0] + r[1] + r[2] for r in rows)
+    avg = total / shifts
+
+    await message.answer(
+        f"📅 <b>Статистика за {month}</b>\n\n"
+        f"📅 Смен: <b>{shifts}</b>\n"
+        f"💰 Итого: <b>{format_money(total)}</b>\n"
+        f"📈 Средний: <b>{format_money(avg)}</b>",
+        parse_mode="HTML",
+        reply_markup=inline_main_menu()
+    )
+
 
 @dp.message_handler(lambda m: m.text and not m.text.startswith("/"))
 async def save_shift(message: types.Message):
 
+    if message.from_user.id in month_mode:
+        return
+    
     if message.from_user.id not in ALLOWED_USERS:
         return
-
+    
     try:
         parts = message.text.split()
         user_id = message.from_user.id
 
         today = datetime.now()
         current_year = today.year
-
+            
+        
         # -------------------------------
         # Определяем дату
         # -------------------------------
-        if len(parts) == 3:
+
+        if user_id in today_mode and len(parts) == 3:
             date = today.strftime("%Y-%m-%d")
             rate, consum, tips = parts
+            today_mode.remove(user_id)
 
         elif parts[0].lower() == "вчера" and len(parts) == 4:
             date = (today - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -302,9 +366,11 @@ async def save_shift(message: types.Message):
             date, rate, consum, tips = parts
 
         else:
+            today_mode.discard(user_id)
             await message.answer("❌ Неверный формат")
             return
 
+                                         
         # -------------------------------
         # Проверка на дубль
         # -------------------------------
@@ -418,12 +484,11 @@ async def stats(callback: types.CallbackQuery):
     await callback.message.answer(
     f"📊 <b>Твоя статистика</b>\n\n"
     f"📅 Смен: <b>{len(rows)}</b>\n\n"
-    f"💵 Ставка: <b>{total_rate:.2f}</b>\n"
-    f"🍾 Консум: <b>{total_consum:.2f}</b>\n"
-    f"☕ Чай: <b>{total_tips:.2f}</b>\n"
-    f"━━━━━━━━━━━━━━\n"
-    f"💰 Итого: <b>{total:.2f}</b>\n"
-    f"📈 Средний: <b>{avg:.2f}</b>",
+    f"💵 Ставка: <b>{format_money(total_rate)}</b>\n"
+    f"🍾 Консум: <b>{format_money(total_consum)}</b>\n"
+    f"☕ Чай: <b>{format_money(total_tips)}</b>\n"
+    f"💰 Итого: <b>{format_money(total)}</b>\n"
+    f"📈 Средний: <b>{format_money(avg)}</b>",
     parse_mode="HTML",
     reply_markup=inline_main_menu()
 )
@@ -453,7 +518,7 @@ async def list_shifts(callback: types.CallbackQuery):
     text = "📋 <b>Последние смены</b>\n\n"
     for r in rows:
         total = r[2] + r[3] + r[4]
-        text += f"{r[0]}. {r[1]} — {total:.2f}\n"
+        text += f"{r[0]}. {r[1]} — {format_money(total)}\n"
 
     await callback.message.answer(
         text,
@@ -564,15 +629,15 @@ async def month_stats(callback: types.CallbackQuery):
     await callback.message.answer(
     f"📅 <b>Статистика за {month}</b>\n\n"
     f"📅 Смен: <b>{shifts}</b>\n\n"
-    f"💵 Ставка: <b>{total_rate:.2f}</b>\n"
-    f"🍾 Консум: <b>{total_consum:.2f}</b>\n"
-    f"☕ Чай: <b>{total_tips:.2f}</b>\n"
-    f"━━━━━━━━━━━━━━\n"
-    f"💰 Итого: <b>{total:.2f}</b>\n"
-    f"📈 Средний: <b>{avg:.2f}</b>",
+    f"💵 Ставка: <b>{format_money(total_rate)}</b>\n"
+    f"🍾 Консум: <b>{format_money(total_consum)}</b>\n"
+    f"☕ Чай: <b>{format_money(total_tips)}</b>\n"
+    f"💰 Итого: <b>{format_money(total)}</b>\n"
+    f"📈 Средний: <b>{format_money(avg)}</b>",
     parse_mode="HTML",
     reply_markup=inline_main_menu()
 )
+    
 @dp.callback_query_handler(lambda c: c.data == "best_month")
 async def best_month(callback: types.CallbackQuery):
     await callback.answer()
@@ -600,7 +665,7 @@ async def best_month(callback: types.CallbackQuery):
     await callback.message.answer(
         f"🔥 <b>Лучший месяц</b>\n\n"
         f"📅 {month}\n"
-        f"💰 Доход: <b>{total:.2f}</b>",
+        f"💰 Итого: <b>{format_money(total)}</b>\n",
         parse_mode="HTML",
         reply_markup=inline_main_menu()
     )
@@ -608,47 +673,24 @@ async def best_month(callback: types.CallbackQuery):
 async def choose_month(callback: types.CallbackQuery):
     await callback.answer()
 
+    user_id = callback.from_user.id
+    month_mode.add(user_id)
+
     await callback.message.answer(
-        "📅 Введи месяц в формате:\n\n"
+        "📅 <b>Выбор месяца</b>\n\n"
+        "Введи месяц в формате:\n"
         "ГГГГ-ММ\n\n"
         "Пример:\n"
-        "2026-02"
+        "2026-02",
+        parse_mode="HTML"
     )
-@dp.message_handler(lambda m: len(m.text) == 7 and "-" in m.text)
-async def custom_month_stats(message: types.Message):
+# ================= МЕСЯЧНЫЙ ОТЧЕТ =================
 
-    user_id = message.from_user.id
-    month = message.text
+async def monthly_report():
 
-    cursor.execute("""
-        SELECT rate, consum, tips
-        FROM shifts
-        WHERE user_id = ? AND date LIKE ?
-    """, (user_id, f"{month}%"))
+    today = datetime.now()
 
-    rows = cursor.fetchall()
 
-    if not rows:
-        await message.answer("Нет данных за этот месяц")
-        return
-
-    shifts = len(rows)
-    total = sum(r[0] + r[1] + r[2] for r in rows)
-    avg = total / shifts
-
-    await message.answer(
-        f"📅 <b>Статистика за {month}</b>\n\n"
-        f"📅 Смен: <b>{shifts}</b>\n"
-        f"💰 Итого: <b>{total:.2f}</b>\n"
-        f"📈 Средний: <b>{avg:.2f}</b>",
-        parse_mode="HTML",
-        reply_markup=inline_main_menu()
-    )
-    async def monthly_report():
-    
-     today = datetime.now()
-
-    # Берём прошлый месяц
     first_day = today.replace(day=1)
     last_month = first_day - timedelta(days=1)
     month = last_month.strftime("%Y-%m")
@@ -671,18 +713,22 @@ async def custom_month_stats(message: types.Message):
         avg = total / shifts
 
         await bot.send_message(
-            user_id,
-            f"📅 <b>Отчёт за {month}</b>\n\n"
-            f"Смен: <b>{shifts}</b>\n"
-            f"💰 Итого: <b>{total:.2f}</b>\n"
-            f"📈 Средний: <b>{avg:.2f}</b>\n\n"
-            f"🔥 Отличная работа!",
-            parse_mode="HTML"
-        )
+    user_id,
+        f"📅 <b>Отчёт за {month}</b>\n\n"
+        f"Смен: <b>{shifts}</b>\n"
+        f"💰 Итого: <b>{format_money(total)}</b>\n"
+        f"📈 Средний: <b>{format_money(avg)}</b>\n\n"
+        f"🔥 Отличная работа!",
+    parse_mode="HTML"
+)
+
     # ================= СЕГОДНЯ =================
 @dp.callback_query_handler(lambda c: c.data == "today")
 async def today_shift(callback: types.CallbackQuery):
     await callback.answer()
+
+    user_id = callback.from_user.id
+    today_mode.add(user_id)
 
     await callback.message.answer(
         "📅 <b>Сегодняшняя смена</b>\n\n"
