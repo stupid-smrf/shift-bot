@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS shifts (
     date TEXT,
     rate REAL,
     consum REAL,
-    tips REAL
+    tips REAL,
+    UNIQUE(user_id, date)
 )
 """)
 
@@ -54,7 +55,7 @@ def format_money(value):
     return f"{int(value):,}".replace(",", " ") + " ₽"
 
 def register_user(user: types.User):
-    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user.id,))
+    cursor.execute("SELECT user_id FROM users WHERE user_id=?", (user.id,))
     if not cursor.fetchone():
         cursor.execute(
             "INSERT INTO users VALUES (?, ?, ?, ?)",
@@ -73,12 +74,9 @@ def motivational_quote():
         "Система > мотивация",
         "Каждая смена — шаг к свободе",
         "Контроль = рост",
-        "Маленькие шаги → большие суммы",
-        "Ты управляешь деньгами, а не наоборот",
         "Регулярность делает богатым",
         "Цифры — это сила",
-        "PRO начинается с порядка",
-        "Система решает всё"
+        "PRO начинается с порядка"
     ]
     return random.choice(quotes)
 
@@ -86,13 +84,13 @@ def inline_main_menu():
     kb = InlineKeyboardMarkup(row_width=2)
 
     kb.add(
-        InlineKeyboardButton("📊 Статистика", callback_data="stats"),
-        InlineKeyboardButton("📋 Последние", callback_data="list"),
+        InlineKeyboardButton("➕ Добавить", callback_data="add"),
+        InlineKeyboardButton("📅 Сегодня", callback_data="today"),
     )
 
     kb.add(
-        InlineKeyboardButton("➕ Добавить", callback_data="add"),
-        InlineKeyboardButton("📅 Сегодня", callback_data="today"),
+        InlineKeyboardButton("✏ Редактировать", callback_data="edit"),
+        InlineKeyboardButton("🗑 Удалить", callback_data="delete"),
     )
 
     kb.add(
@@ -106,9 +104,8 @@ def build_main_screen(user_id):
     today = datetime.now()
     today_str = today.strftime("%d.%m.%Y")
     today_db = today.strftime("%Y-%m-%d")
-    month_name = today.strftime("%B")
 
-    cursor.execute("SELECT rate, consum, tips FROM shifts WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT rate, consum, tips FROM shifts WHERE user_id=?", (user_id,))
     rows = cursor.fetchall()
 
     shifts = len(rows)
@@ -116,7 +113,7 @@ def build_main_screen(user_id):
     avg = total / shifts if shifts else 0
 
     cursor.execute(
-        "SELECT 1 FROM shifts WHERE user_id = ? AND date = ?",
+        "SELECT 1 FROM shifts WHERE user_id=? AND date=?",
         (user_id, today_db)
     )
     today_exists = cursor.fetchone()
@@ -126,7 +123,7 @@ def build_main_screen(user_id):
     return (
         "💎 <b>Твой менеджер дохода</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
-        f"📅 <b>{today_str}</b> | {month_name}\n\n"
+        f"📅 <b>{today_str}</b>\n\n"
         f"📊 Смен: <b>{shifts}</b>\n"
         f"💰 Доход: <b>{format_money(total)}</b>\n"
         f"📈 Средний: <b>{format_money(avg)}</b>\n\n"
@@ -152,13 +149,14 @@ async def update_main(user_id):
 class ShiftState(StatesGroup):
     waiting_for_shift = State()
     waiting_for_today = State()
+    waiting_for_edit = State()
+    confirm_delete = State()
 
 # ================= START =================
 
 @dp.message_handler(commands=["start"], state="*")
 async def start(message: types.Message, state: FSMContext):
-
-    await state.finish()  # сброс FSM
+    await state.finish()
 
     register_user(message.from_user)
 
@@ -179,7 +177,7 @@ async def add_shift(callback: types.CallbackQuery):
 
     await callback.message.edit_text(
         "📅 <b>Добавление смены</b>\n\n"
-        "Введи:\n"
+        "Формат:\n"
         "ГГГГ-ММ-ДД СТАВКА КОНСУМ ЧАЙ\n\n"
         "Пример:\n"
         "2026-02-01 3000 2000 2500",
@@ -192,17 +190,48 @@ async def process_shift(message: types.Message, state: FSMContext):
         date, rate, consum, tips = message.text.split()
         datetime.strptime(date, "%Y-%m-%d")
 
-        cursor.execute(
-            "INSERT INTO shifts VALUES (NULL, ?, ?, ?, ?, ?)",
-            (message.from_user.id, date, float(rate), float(consum), float(tips))
-        )
-        conn.commit()
+        try:
+            cursor.execute(
+                "INSERT INTO shifts VALUES (NULL, ?, ?, ?, ?, ?)",
+                (message.from_user.id, date, float(rate), float(consum), float(tips))
+            )
+            conn.commit()
+            await state.finish()
+            await update_main(message.from_user.id)
 
-        await state.finish()
-        await update_main(message.from_user.id)
+        except sqlite3.IntegrityError:
+            await state.update_data(
+                duplicate_date=date,
+                duplicate_rate=rate,
+                duplicate_consum=consum,
+                duplicate_tips=tips
+            )
+            await message.answer(
+                f"⚠️ Смена за {date} уже существует.\n"
+                "Напиши: ЗАМЕНИТЬ"
+            )
 
     except:
         await message.answer("❌ Формат: ГГГГ-ММ-ДД СТАВКА КОНСУМ ЧАЙ")
+
+@dp.message_handler(lambda m: m.text.lower() == "заменить", state=ShiftState.waiting_for_shift)
+async def replace_shift(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+
+    cursor.execute(
+        "UPDATE shifts SET rate=?, consum=?, tips=? WHERE user_id=? AND date=?",
+        (
+            float(data["duplicate_rate"]),
+            float(data["duplicate_consum"]),
+            float(data["duplicate_tips"]),
+            message.from_user.id,
+            data["duplicate_date"]
+        )
+    )
+    conn.commit()
+
+    await state.finish()
+    await update_main(message.from_user.id)
 
 # ================= СЕГОДНЯ =================
 
@@ -213,7 +242,7 @@ async def today_shift(callback: types.CallbackQuery):
 
     await callback.message.edit_text(
         "📅 <b>Сегодняшняя смена</b>\n\n"
-        "Введи:\n"
+        "Формат:\n"
         "СТАВКА КОНСУМ ЧАЙ\n\n"
         "Пример:\n"
         "3000 2000 2500",
@@ -227,7 +256,7 @@ async def process_today(message: types.Message, state: FSMContext):
         today = datetime.now().strftime("%Y-%m-%d")
 
         cursor.execute(
-            "INSERT INTO shifts VALUES (NULL, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO shifts VALUES (NULL, ?, ?, ?, ?, ?)",
             (message.from_user.id, today, float(rate), float(consum), float(tips))
         )
         conn.commit()
@@ -237,6 +266,134 @@ async def process_today(message: types.Message, state: FSMContext):
 
     except:
         await message.answer("❌ Формат: СТАВКА КОНСУМ ЧАЙ")
+
+# ================= РЕДАКТИРОВАНИЕ =================
+
+@dp.callback_query_handler(lambda c: c.data == "edit")
+async def edit_menu(callback: types.CallbackQuery):
+    await callback.answer()
+
+    cursor.execute("""
+        SELECT id, date
+        FROM shifts
+        WHERE user_id=?
+        ORDER BY date DESC
+        LIMIT 10
+    """, (callback.from_user.id,))
+
+    rows = cursor.fetchall()
+
+    if not rows:
+        await callback.message.edit_text("Нет смен.", reply_markup=inline_main_menu())
+        return
+
+    kb = InlineKeyboardMarkup()
+    for r in rows:
+        kb.add(InlineKeyboardButton(f"✏ {r[1]}", callback_data=f"edit_{r[0]}"))
+    kb.add(InlineKeyboardButton("⬅ Назад", callback_data="back"))
+
+    await callback.message.edit_text("Выбери смену:", reply_markup=kb)
+
+@dp.callback_query_handler(lambda c: c.data.startswith("edit_"))
+async def edit_shift(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    shift_id = int(callback.data.split("_")[1])
+    await state.update_data(edit_id=shift_id)
+    await ShiftState.waiting_for_edit.set()
+
+    await callback.message.answer("Введи: СТАВКА КОНСУМ ЧАЙ")
+
+@dp.message_handler(state=ShiftState.waiting_for_edit)
+async def process_edit(message: types.Message, state: FSMContext):
+    try:
+        rate, consum, tips = message.text.split()
+        data = await state.get_data()
+
+        cursor.execute("""
+            UPDATE shifts
+            SET rate=?, consum=?, tips=?
+            WHERE id=? AND user_id=?
+        """, (
+            float(rate),
+            float(consum),
+            float(tips),
+            data["edit_id"],
+            message.from_user.id
+        ))
+        conn.commit()
+
+        await state.finish()
+        await update_main(message.from_user.id)
+
+    except:
+        await message.answer("❌ Формат: СТАВКА КОНСУМ ЧАЙ")
+
+# ================= УДАЛЕНИЕ =================
+
+@dp.callback_query_handler(lambda c: c.data == "delete")
+async def delete_menu(callback: types.CallbackQuery):
+    await callback.answer()
+
+    cursor.execute("""
+        SELECT id, date
+        FROM shifts
+        WHERE user_id=?
+        ORDER BY date DESC
+        LIMIT 10
+    """, (callback.from_user.id,))
+
+    rows = cursor.fetchall()
+
+    if not rows:
+        await callback.message.edit_text("Нет смен.", reply_markup=inline_main_menu())
+        return
+
+    kb = InlineKeyboardMarkup()
+    for r in rows:
+        kb.add(InlineKeyboardButton(f"🗑 {r[1]}", callback_data=f"del_{r[0]}"))
+    kb.add(InlineKeyboardButton("⬅ Назад", callback_data="back"))
+
+    await callback.message.edit_text("Выбери смену:", reply_markup=kb)
+
+@dp.callback_query_handler(lambda c: c.data.startswith("del_"))
+async def confirm_delete(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    shift_id = int(callback.data.split("_")[1])
+    await state.update_data(delete_id=shift_id)
+    await ShiftState.confirm_delete.set()
+
+    kb = InlineKeyboardMarkup()
+    kb.add(
+        InlineKeyboardButton("✅ Да", callback_data="confirm_yes"),
+        InlineKeyboardButton("❌ Нет", callback_data="confirm_no")
+    )
+
+    await callback.message.edit_text("Удалить смену?", reply_markup=kb)
+
+@dp.callback_query_handler(lambda c: c.data == "confirm_yes", state=ShiftState.confirm_delete)
+async def delete_yes(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+
+    cursor.execute(
+        "DELETE FROM shifts WHERE id=? AND user_id=?",
+        (data["delete_id"], callback.from_user.id)
+    )
+    conn.commit()
+
+    await state.finish()
+    await update_main(callback.from_user.id)
+
+@dp.callback_query_handler(lambda c: c.data == "confirm_no", state=ShiftState.confirm_delete)
+async def delete_no(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.finish()
+    await update_main(callback.from_user.id)
+
+@dp.callback_query_handler(lambda c: c.data == "back")
+async def go_back(callback: types.CallbackQuery):
+    await callback.answer()
+    await update_main(callback.from_user.id)
 
 # ================= НАПОМИНАНИЕ =================
 
@@ -250,58 +407,22 @@ async def check_shifts():
         user_id = user[0]
 
         cursor.execute(
-            "SELECT 1 FROM shifts WHERE user_id = ? AND date = ?",
+            "SELECT 1 FROM shifts WHERE user_id=? AND date=?",
             (user_id, yesterday)
         )
 
         if not cursor.fetchone():
             await bot.send_message(
                 user_id,
-                f"🌙 Смена за {yesterday} не внесена.\nНе забудь добавить 👇",
+                f"🌙 Смена за {yesterday} не внесена.",
                 reply_markup=inline_main_menu()
             )
-
-# ================= МЕСЯЧНЫЙ ОТЧЁТ =================
-
-async def monthly_report():
-    first_day = datetime.now().replace(day=1)
-    last_month = first_day - timedelta(days=1)
-    month = last_month.strftime("%Y-%m")
-
-    cursor.execute("SELECT user_id FROM users")
-    users = cursor.fetchall()
-
-    for user in users:
-        user_id = user[0]
-
-        cursor.execute(
-            "SELECT rate, consum, tips FROM shifts WHERE user_id = ? AND date LIKE ?",
-            (user_id, f"{month}%")
-        )
-
-        rows = cursor.fetchall()
-        if not rows:
-            continue
-
-        shifts = len(rows)
-        total = sum(r[0] + r[1] + r[2] for r in rows)
-        avg = total / shifts
-
-        await bot.send_message(
-            user_id,
-            f"📅 Отчёт за {month}\n\n"
-            f"Смен: {shifts}\n"
-            f"💰 Итого: {format_money(total)}\n"
-            f"📈 Средний: {format_money(avg)}\n\n"
-            "🔥 Отличная работа!"
-        )
 
 # ================= ЗАПУСК =================
 
 async def on_startup(dp):
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(check_shifts, "cron", hour=7, minute=30)
-    scheduler.add_job(monthly_report, "cron", day=1, hour=9)
+    scheduler.add_job(check_shifts, "cron", hour=7)
     scheduler.start()
 
 if __name__ == "__main__":
