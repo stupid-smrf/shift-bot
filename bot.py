@@ -67,39 +67,48 @@ def register_user(user: types.User):
         )
         conn.commit()
 
-def quote():
+def motivational_quote():
     quotes = [
+        "Дисциплина делает деньги",
         "Система > мотивация",
         "Каждая смена — шаг к свободе",
-        "Деньги любят учет",
+        "Контроль = рост",
+        "Маленькие шаги → большие суммы",
+        "Ты управляешь деньгами, а не наоборот",
         "Регулярность делает богатым",
-        "Статистика не врёт",
-        "Смена за сменой — строится свобода",
-        "Контроль = рост"
+        "Цифры — это сила",
+        "PRO начинается с порядка",
+        "Система решает всё"
     ]
     return random.choice(quotes)
 
-def menu():
+def inline_main_menu():
     kb = InlineKeyboardMarkup(row_width=2)
+
     kb.add(
         InlineKeyboardButton("📊 Статистика", callback_data="stats"),
         InlineKeyboardButton("📋 Последние", callback_data="list"),
     )
+
     kb.add(
         InlineKeyboardButton("➕ Добавить", callback_data="add"),
         InlineKeyboardButton("📅 Сегодня", callback_data="today"),
     )
+
     kb.add(
         InlineKeyboardButton("📅 Месяц", callback_data="month"),
-        InlineKeyboardButton("🔥 Лучший", callback_data="best"),
+        InlineKeyboardButton("🔥 Лучший месяц", callback_data="best_month"),
     )
+
     return kb
 
-def build_main(user_id):
+def build_main_screen(user_id):
     today = datetime.now()
+    today_str = today.strftime("%d.%m.%Y")
     today_db = today.strftime("%Y-%m-%d")
+    month_name = today.strftime("%B")
 
-    cursor.execute("SELECT rate, consum, tips FROM shifts WHERE user_id=?", (user_id,))
+    cursor.execute("SELECT rate, consum, tips FROM shifts WHERE user_id = ?", (user_id,))
     rows = cursor.fetchall()
 
     shifts = len(rows)
@@ -107,146 +116,152 @@ def build_main(user_id):
     avg = total / shifts if shifts else 0
 
     cursor.execute(
-        "SELECT 1 FROM shifts WHERE user_id=? AND date=?",
+        "SELECT 1 FROM shifts WHERE user_id = ? AND date = ?",
         (user_id, today_db)
     )
-    status = "✅ Внесена" if cursor.fetchone() else "❌ Не внесена"
+    today_exists = cursor.fetchone()
+
+    status = "✅ Внесена" if today_exists else "❌ Не внесена"
 
     return (
         "💎 <b>Твой менеджер дохода</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
+        f"📅 <b>{today_str}</b> | {month_name}\n\n"
         f"📊 Смен: <b>{shifts}</b>\n"
         f"💰 Доход: <b>{format_money(total)}</b>\n"
         f"📈 Средний: <b>{format_money(avg)}</b>\n\n"
         f"🗓 Сегодня: {status}\n\n"
-        f"💬 <i>{quote()}</i>\n\n"
+        f"💬 <i>{motivational_quote()}</i>\n\n"
         "👇 Выбери действие:"
     )
 
-async def refresh(user_id):
+async def update_main(user_id):
     if user_id not in main_messages:
         return
 
     await bot.edit_message_text(
         chat_id=user_id,
         message_id=main_messages[user_id],
-        text=build_main(user_id),
+        text=build_main_screen(user_id),
         parse_mode="HTML",
-        reply_markup=menu()
+        reply_markup=inline_main_menu()
     )
 
 # ================= FSM =================
 
 class ShiftState(StatesGroup):
-    add_shift = State()
-    today_shift = State()
-
-@dp.message_handler(state="*")
-async def guard(message: types.Message, state: FSMContext):
-    if message.text.startswith("/"):
-        await state.finish()
+    waiting_for_shift = State()
+    waiting_for_today = State()
 
 # ================= START =================
 
-@dp.message_handler(commands=["start"])
-async def start(message: types.Message):
+@dp.message_handler(commands=["start"], state="*")
+async def start(message: types.Message, state: FSMContext):
+
+    await state.finish()  # сброс FSM
+
     register_user(message.from_user)
 
     sent = await message.answer(
-        build_main(message.from_user.id),
+        build_main_screen(message.from_user.id),
         parse_mode="HTML",
-        reply_markup=menu()
+        reply_markup=inline_main_menu()
     )
 
     main_messages[message.from_user.id] = sent.message_id
 
-# ================= ADD =================
+# ================= ДОБАВИТЬ =================
 
 @dp.callback_query_handler(lambda c: c.data == "add")
-async def add(callback: types.CallbackQuery, state: FSMContext):
+async def add_shift(callback: types.CallbackQuery):
     await callback.answer()
-    await state.finish()
-    await ShiftState.add_shift.set()
+    await ShiftState.waiting_for_shift.set()
 
-    await bot.edit_message_text(
-        "📅 Введи:\nГГГГ-ММ-ДД СТАВКА КОНСУМ ЧАЙ\n\n"
-        "Пример:\n2026-02-01 3000 2000 2500",
-        callback.from_user.id,
-        main_messages[callback.from_user.id]
+    await callback.message.edit_text(
+        "📅 <b>Добавление смены</b>\n\n"
+        "Введи:\n"
+        "ГГГГ-ММ-ДД СТАВКА КОНСУМ ЧАЙ\n\n"
+        "Пример:\n"
+        "2026-02-01 3000 2000 2500",
+        parse_mode="HTML"
     )
 
-@dp.message_handler(state=ShiftState.add_shift)
-async def process_add(message: types.Message, state: FSMContext):
+@dp.message_handler(state=ShiftState.waiting_for_shift)
+async def process_shift(message: types.Message, state: FSMContext):
     try:
         date, rate, consum, tips = message.text.split()
         datetime.strptime(date, "%Y-%m-%d")
-        rate, consum, tips = float(rate), float(consum), float(tips)
 
         cursor.execute(
             "INSERT INTO shifts VALUES (NULL, ?, ?, ?, ?, ?)",
-            (message.from_user.id, date, rate, consum, tips)
+            (message.from_user.id, date, float(rate), float(consum), float(tips))
         )
         conn.commit()
 
         await state.finish()
-        await refresh(message.from_user.id)
+        await update_main(message.from_user.id)
 
     except:
-        await message.answer("❌ Ошибка формата")
+        await message.answer("❌ Формат: ГГГГ-ММ-ДД СТАВКА КОНСУМ ЧАЙ")
 
-# ================= TODAY =================
+# ================= СЕГОДНЯ =================
 
 @dp.callback_query_handler(lambda c: c.data == "today")
-async def today(callback: types.CallbackQuery, state: FSMContext):
+async def today_shift(callback: types.CallbackQuery):
     await callback.answer()
-    await state.finish()
-    await ShiftState.today_shift.set()
+    await ShiftState.waiting_for_today.set()
 
-    await bot.edit_message_text(
-        "📅 Сегодняшняя смена\n\n"
+    await callback.message.edit_text(
+        "📅 <b>Сегодняшняя смена</b>\n\n"
+        "Введи:\n"
         "СТАВКА КОНСУМ ЧАЙ\n\n"
-        "Пример:\n3000 2000 2500",
-        callback.from_user.id,
-        main_messages[callback.from_user.id]
+        "Пример:\n"
+        "3000 2000 2500",
+        parse_mode="HTML"
     )
 
-@dp.message_handler(state=ShiftState.today_shift)
+@dp.message_handler(state=ShiftState.waiting_for_today)
 async def process_today(message: types.Message, state: FSMContext):
     try:
-        rate, consum, tips = map(float, message.text.split())
+        rate, consum, tips = message.text.split()
         today = datetime.now().strftime("%Y-%m-%d")
 
         cursor.execute(
             "INSERT INTO shifts VALUES (NULL, ?, ?, ?, ?, ?)",
-            (message.from_user.id, today, rate, consum, tips)
+            (message.from_user.id, today, float(rate), float(consum), float(tips))
         )
         conn.commit()
 
         await state.finish()
-        await refresh(message.from_user.id)
+        await update_main(message.from_user.id)
 
     except:
-        await message.answer("❌ Ошибка формата")
+        await message.answer("❌ Формат: СТАВКА КОНСУМ ЧАЙ")
 
-# ================= НАПОМИНАНИЯ =================
+# ================= НАПОМИНАНИЕ =================
 
 async def check_shifts():
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
     cursor.execute("SELECT user_id FROM users")
-    for (user_id,) in cursor.fetchall():
+    users = cursor.fetchall()
+
+    for user in users:
+        user_id = user[0]
 
         cursor.execute(
-            "SELECT 1 FROM shifts WHERE user_id=? AND date=?",
+            "SELECT 1 FROM shifts WHERE user_id = ? AND date = ?",
             (user_id, yesterday)
         )
 
         if not cursor.fetchone():
             await bot.send_message(
                 user_id,
-                f"🌙 Смена за {yesterday} не внесена",
-                reply_markup=menu()
+                f"🌙 Смена за {yesterday} не внесена.\nНе забудь добавить 👇",
+                reply_markup=inline_main_menu()
             )
+
+# ================= МЕСЯЧНЫЙ ОТЧЁТ =================
 
 async def monthly_report():
     first_day = datetime.now().replace(day=1)
@@ -254,10 +269,13 @@ async def monthly_report():
     month = last_month.strftime("%Y-%m")
 
     cursor.execute("SELECT user_id FROM users")
-    for (user_id,) in cursor.fetchall():
+    users = cursor.fetchall()
+
+    for user in users:
+        user_id = user[0]
 
         cursor.execute(
-            "SELECT rate, consum, tips FROM shifts WHERE user_id=? AND date LIKE ?",
+            "SELECT rate, consum, tips FROM shifts WHERE user_id = ? AND date LIKE ?",
             (user_id, f"{month}%")
         )
 
@@ -274,7 +292,8 @@ async def monthly_report():
             f"📅 Отчёт за {month}\n\n"
             f"Смен: {shifts}\n"
             f"💰 Итого: {format_money(total)}\n"
-            f"📈 Средний: {format_money(avg)}"
+            f"📈 Средний: {format_money(avg)}\n\n"
+            "🔥 Отличная работа!"
         )
 
 # ================= ЗАПУСК =================
