@@ -105,11 +105,21 @@ def build_main_screen(user_id):
     today_str = today.strftime("%d.%m.%Y")
     today_db = today.strftime("%Y-%m-%d")
 
-    cursor.execute("SELECT rate, consum, tips FROM shifts WHERE user_id=?", (user_id,))
+    cursor.execute("""
+        SELECT rate, consum, tips
+        FROM shifts
+        WHERE user_id=?
+    """, (user_id,))
+
     rows = cursor.fetchall()
 
     shifts = len(rows)
-    total = sum(r[0] + r[1] + r[2] for r in rows) if rows else 0
+
+    total_rate = sum(r[0] for r in rows) if rows else 0
+    total_consum = sum(r[1] for r in rows) if rows else 0
+    total_tips = sum(r[2] for r in rows) if rows else 0
+
+    total = total_rate + total_consum + total_tips
     avg = total / shifts if shifts else 0
 
     cursor.execute(
@@ -124,8 +134,12 @@ def build_main_screen(user_id):
         "💎 <b>Твой менеджер дохода</b>\n"
         "━━━━━━━━━━━━━━━━━━\n\n"
         f"📅 <b>{today_str}</b>\n\n"
-        f"📊 Смен: <b>{shifts}</b>\n"
-        f"💰 Доход: <b>{format_money(total)}</b>\n"
+        f"📊 Смен: <b>{shifts}</b>\n\n"
+        f"💰 Ставка: <b>{format_money(total_rate)}</b>\n"
+        f"🍾 Консум: <b>{format_money(total_consum)}</b>\n"
+        f"☕ Чай: <b>{format_money(total_tips)}</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"💎 Итого: <b>{format_money(total)}</b>\n"
         f"📈 Средний: <b>{format_money(avg)}</b>\n\n"
         f"🗓 Сегодня: {status}\n\n"
         f"💬 <i>{motivational_quote()}</i>\n\n"
@@ -197,6 +211,7 @@ async def process_shift(message: types.Message, state: FSMContext):
             )
             conn.commit()
             await state.finish()
+            await message.delete()
             await update_main(message.from_user.id)
 
         except sqlite3.IntegrityError:
@@ -262,6 +277,7 @@ async def process_today(message: types.Message, state: FSMContext):
         conn.commit()
 
         await state.finish()
+        await message.delete()
         await update_main(message.from_user.id)
 
     except:
@@ -323,6 +339,7 @@ async def process_edit(message: types.Message, state: FSMContext):
         conn.commit()
 
         await state.finish()
+        await message.delete()
         await update_main(message.from_user.id)
 
     except:
