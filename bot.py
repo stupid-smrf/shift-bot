@@ -194,7 +194,7 @@ async def add_shift(callback: types.CallbackQuery):
         "Формат:\n"
         "ГГГГ-ММ-ДД СТАВКА КОНСУМ ЧАЙ\n\n"
         "Пример:\n"
-        "2026-02-01 3000 2000 2500",
+        "2026-02-01 3500 2000 2500",
         parse_mode="HTML"
     )
 
@@ -221,10 +221,17 @@ async def process_shift(message: types.Message, state: FSMContext):
                 duplicate_consum=consum,
                 duplicate_tips=tips
             )
+            kb = InlineKeyboardMarkup()
+            kb.add(
+            InlineKeyboardButton("✅ Заменить", callback_data="confirm_replace"),
+            InlineKeyboardButton("❌ Отмена", callback_data="cancel_replace")
+)
+
             await message.answer(
-                f"⚠️ Смена за {date} уже существует.\n"
-                "Напиши: ЗАМЕНИТЬ"
-            )
+            f"⚠️ Смена за {date} уже существует.\n"
+            "Заменить её новыми данными?",
+            reply_markup=kb
+)
 
     except:
         await message.answer("❌ Формат: ГГГГ-ММ-ДД СТАВКА КОНСУМ ЧАЙ")
@@ -260,7 +267,7 @@ async def today_shift(callback: types.CallbackQuery):
         "Формат:\n"
         "СТАВКА КОНСУМ ЧАЙ\n\n"
         "Пример:\n"
-        "3000 2000 2500",
+        "3500 2000 2500",
         parse_mode="HTML"
     )
 
@@ -410,6 +417,33 @@ async def delete_no(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query_handler(lambda c: c.data == "back")
 async def go_back(callback: types.CallbackQuery):
     await callback.answer()
+    await update_main(callback.from_user.id)
+@dp.callback_query_handler(lambda c: c.data == "confirm_replace", state=ShiftState.waiting_for_shift)
+async def confirm_replace(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+
+    data = await state.get_data()
+
+    cursor.execute(
+        "UPDATE shifts SET rate=?, consum=?, tips=? WHERE user_id=? AND date=?",
+        (
+            float(data["duplicate_rate"]),
+            float(data["duplicate_consum"]),
+            float(data["duplicate_tips"]),
+            callback.from_user.id,
+            data["duplicate_date"]
+        )
+    )
+    conn.commit()
+
+    await state.finish()
+    await update_main(callback.from_user.id)
+
+
+@dp.callback_query_handler(lambda c: c.data == "cancel_replace", state=ShiftState.waiting_for_shift)
+async def cancel_replace(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer("Отмена ❌")
+    await state.finish()
     await update_main(callback.from_user.id)
 
 # ================= НАПОМИНАНИЕ =================
