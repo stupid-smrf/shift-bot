@@ -178,9 +178,16 @@ class ShiftState(StatesGroup):
 @dp.message_handler(commands=["start"], state="*")
 async def start(message: types.Message, state: FSMContext):
     await state.finish()
-
+    
     register_user(message.from_user)
 
+    # если панель уже существует — просто обновляем её
+    if message.from_user.id in main_messages:
+        await update_main(message.from_user.id)
+        await message.delete()
+        return
+
+    # если панели нет — создаём новую
     sent = await message.answer(
         build_main_screen(message.from_user.id),
         parse_mode="HTML",
@@ -188,7 +195,7 @@ async def start(message: types.Message, state: FSMContext):
     )
 
     main_messages[message.from_user.id] = sent.message_id
-
+    await message.delete()
 # ================= ДОБАВИТЬ =================
 
 @dp.callback_query_handler(lambda c: c.data == "add")
