@@ -150,6 +150,13 @@ async def update_main(user_id):
     if user_id not in main_messages:
         return
 
+    # маленький визуальный эффект обновления
+    await bot.edit_message_text(
+        chat_id=user_id,
+        message_id=main_messages[user_id],
+        text="🔄 Обновление...",
+    )
+
     await bot.edit_message_text(
         chat_id=user_id,
         message_id=main_messages[user_id],
@@ -396,7 +403,8 @@ async def confirm_delete(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query_handler(lambda c: c.data == "confirm_yes", state=ShiftState.confirm_delete)
 async def delete_yes(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await callback.answer("Удалено 🗑")
+
     data = await state.get_data()
 
     cursor.execute(
@@ -406,6 +414,8 @@ async def delete_yes(callback: types.CallbackQuery, state: FSMContext):
     conn.commit()
 
     await state.finish()
+
+    await callback.message.delete()
     await update_main(callback.from_user.id)
 
 @dp.callback_query_handler(lambda c: c.data == "confirm_no", state=ShiftState.confirm_delete)
@@ -420,7 +430,7 @@ async def go_back(callback: types.CallbackQuery):
     await update_main(callback.from_user.id)
 @dp.callback_query_handler(lambda c: c.data == "confirm_replace", state=ShiftState.waiting_for_shift)
 async def confirm_replace(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer()
+    await callback.answer("Смена заменена ✅")
 
     data = await state.get_data()
 
@@ -437,6 +447,19 @@ async def confirm_replace(callback: types.CallbackQuery, state: FSMContext):
     conn.commit()
 
     await state.finish()
+
+    # удаляем сообщение с кнопками
+    await callback.message.delete()
+
+    await update_main(callback.from_user.id)
+
+
+@dp.callback_query_handler(lambda c: c.data == "cancel_replace", state=ShiftState.waiting_for_shift)
+async def cancel_replace(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer("Отмена ❌")
+    await state.finish()
+
+    await callback.message.delete()
     await update_main(callback.from_user.id)
 
 
