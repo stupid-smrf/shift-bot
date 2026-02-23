@@ -433,4 +433,21 @@ async def on_startup(dp):
 
 
 if __name__ == "__main__":
-    executor.start_polling(dp, on_startup=on_startup)
+    executor.start_polling(
+        dp,
+        on_startup=on_startup,
+        skip_updates=True
+    )
+    import asyncio
+
+async def reset_telegram():
+    await bot.delete_webhook(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    asyncio.get_event_loop().run_until_complete(reset_telegram())
+
+    executor.start_polling(
+        dp,
+        on_startup=on_startup,
+        skip_updates=True
+    )
